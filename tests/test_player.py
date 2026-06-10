@@ -89,11 +89,32 @@ class GuildPlayerTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(player.playback_state, "playing")
             self.assertTrue(player.skip())
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.2)
 
         self.assertTrue(source.cleaned_up)
         self.assertFalse(voice_client.playing)
+        self.assertIsNone(player.current_track)
+        self.assertEqual(player.playback_state, "idle")
+        await player.close()
+
+    async def test_retries_when_ffmpeg_produces_no_audio_frames(self) -> None:
+        extractor = FakeExtractor()
+        extractor.allow_resolve.set()
+        voice_client = FakeVoiceClient()
+        player = GuildPlayer(1, extractor)  # type: ignore[arg-type]
+        player.bind_voice_client(voice_client)  # type: ignore[arg-type]
+
+        with (
+            patch(
+                "loogika.music.player.discord.FFmpegPCMAudio",
+                side_effect=(FakeSource(), FakeSource()),
+            ),
+            patch("loogika.music.player.PLAYBACK_STARTUP_TIMEOUT_SECONDS", 0.01),
+        ):
+            await player.enqueue("track", "user")
+            await asyncio.sleep(0.25)
+
+        self.assertEqual(voice_client.play_calls, 2)
         self.assertIsNone(player.current_track)
         self.assertEqual(player.playback_state, "idle")
         await player.close()

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 import time
 from collections import deque
 
@@ -12,6 +13,31 @@ from loogika.music.models import Track
 
 
 logger = logging.getLogger(__name__)
+
+PLAYBACK_STARTUP_TIMEOUT_SECONDS = 10
+PLAYBACK_ATTEMPTS = 2
+
+
+class StartupTrackingSource(discord.AudioSource):
+    def __init__(self, source: discord.AudioSource) -> None:
+        self.source = source
+        self.first_frame = threading.Event()
+
+    def read(self) -> bytes:
+        data = self.source.read()
+        if data:
+            self.first_frame.set()
+        return data
+
+    def is_opus(self) -> bool:
+        return self.source.is_opus()
+
+    def cleanup(self) -> None:
+        self.source.cleanup()
+
+
+class PlaybackStartupError(RuntimeError):
+    pass
 
 
 class GuildPlayer:
@@ -26,7 +52,7 @@ class GuildPlayer:
         self._queue_ready = asyncio.Event()
         self._worker_task: asyncio.Task[None] | None = None
         self._cancel_current = False
-        self._active_source: discord.FFmpegPCMAudio | None = None
+        self._active_source: discord.AudioSource | None = None
         self._playback_finished: asyncio.Event | None = None
         self.playback_state = "idle"
 
@@ -195,6 +221,24 @@ class GuildPlayer:
             self._queue_ready.clear()
 
     async def _play(self, track: Track) -> None:
+        for attempt in range(1, PLAYBACK_ATTEMPTS + 1):
+            try:
+                await self._play_once(track, attempt)
+                return
+            except PlaybackStartupError:
+                if self._cancel_current or attempt == PLAYBACK_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "Retrying track after playback startup failure",
+                    extra={
+                        "event": "playback.startup.retry",
+                        "guild_id": self.guild_id,
+                        "track_title": track.title,
+                        "attempt": attempt + 1,
+                    },
+                )
+
+    async def _play_once(self, track: Track, attempt: int) -> None:
         started_at = time.perf_counter()
         effect = self.audio_effect
         stream_url = await self.extractor.resolve_stream(track)
@@ -205,10 +249,12 @@ class GuildPlayer:
         if voice_client is None or not voice_client.is_connected():
             raise RuntimeError("The voice client is not connected.")
 
-        source = discord.FFmpegPCMAudio(
-            stream_url,
-            before_options=FFMPEG_BEFORE_OPTIONS,
-            options=effect.ffmpeg_options(FFMPEG_OPTIONS),
+        source = StartupTrackingSource(
+            discord.FFmpegPCMAudio(
+                stream_url,
+                before_options=FFMPEG_BEFORE_OPTIONS,
+                options=effect.ffmpeg_options(FFMPEG_OPTIONS),
+            )
         )
         playback_finished = asyncio.Event()
         self._active_source = source
@@ -248,12 +294,42 @@ class GuildPlayer:
                     "track_title": track.title,
                     "audio_effect": effect.name,
                     "opus_bitrate": effect.opus_bitrate,
+                    "attempt": attempt,
                 },
             )
         except Exception:
             source.cleanup()
             raise
         try:
+            startup_deadline = (
+                asyncio.get_running_loop().time() + PLAYBACK_STARTUP_TIMEOUT_SECONDS
+            )
+            while not source.first_frame.is_set() and not playback_finished.is_set():
+                if asyncio.get_running_loop().time() >= startup_deadline:
+                    logger.warning(
+                        "FFmpeg did not produce an audio frame before the startup deadline",
+                        extra={
+                            "event": "playback.startup.timeout",
+                            "guild_id": self.guild_id,
+                            "track_title": track.title,
+                            "attempt": attempt,
+                            "timeout_seconds": PLAYBACK_STARTUP_TIMEOUT_SECONDS,
+                        },
+                    )
+                    self._terminate_active_playback()
+                    raise PlaybackStartupError(
+                        "FFmpeg did not produce an audio frame before the startup deadline."
+                    )
+                await asyncio.sleep(0.1)
+
+            if playback_finished.is_set() and self._cancel_current:
+                return
+
+            if playback_finished.is_set() and not source.first_frame.is_set():
+                raise PlaybackStartupError(
+                    "FFmpeg playback ended before producing an audio frame."
+                )
+
             await playback_finished.wait()
         finally:
             if self._active_source is source:

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import yt_dlp
 
@@ -160,6 +161,7 @@ class TrackExtractor:
                 "format_id": data.get("format_id"),
                 "protocol": data.get("protocol"),
                 "audio_codec": data.get("acodec"),
+                "stream_host": urlparse(stream_url).hostname,
             },
         )
         return stream_url
