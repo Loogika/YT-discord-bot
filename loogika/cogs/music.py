@@ -285,8 +285,13 @@ class MusicCog(commands.Cog):
                 ephemeral=True,
             )
             return
+        status = {
+            "resolving": "Loading",
+            "playing": "Playing",
+        }.get(player.playback_state, "Finishing")
         await interaction.response.send_message(
-            f"Now playing: [{track.title}]({track.webpage_url})\n"
+            f"Status: **{status}**\n"
+            f"Track: [{track.title}]({track.webpage_url})\n"
             f"Effect: **{player.audio_effect.name}**"
         )
 

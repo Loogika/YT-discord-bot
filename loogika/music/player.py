@@ -26,6 +26,9 @@ class GuildPlayer:
         self._queue_ready = asyncio.Event()
         self._worker_task: asyncio.Task[None] | None = None
         self._cancel_current = False
+        self._active_source: discord.FFmpegPCMAudio | None = None
+        self._playback_finished: asyncio.Event | None = None
+        self.playback_state = "idle"
 
     def bind_voice_client(self, voice_client: discord.VoiceClient) -> None:
         self._voice_client = voice_client
@@ -81,20 +84,18 @@ class GuildPlayer:
         )
 
     def skip(self) -> bool:
-        voice_client = self._voice_client
-        if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
-            voice_client.stop()
-            logger.info(
-                "Current track skipped",
-                extra={"event": "playback.skipped", "guild_id": self.guild_id},
-            )
-            return True
         if self.current_track is None:
             return False
+
         self._cancel_current = True
+        self._terminate_active_playback()
         logger.info(
-            "Resolving track skipped",
-            extra={"event": "playback.skipped", "guild_id": self.guild_id},
+            "Current track skipped",
+            extra={
+                "event": "playback.skipped",
+                "guild_id": self.guild_id,
+                "playback_state": self.playback_state,
+            },
         )
         return True
 
@@ -124,10 +125,7 @@ class GuildPlayer:
         had_tracks = bool(self.current_track or self._queue)
         self._queue.clear()
         self._cancel_current = True
-        if self._voice_client and (
-            self._voice_client.is_playing() or self._voice_client.is_paused()
-        ):
-            self._voice_client.stop()
+        self._terminate_active_playback()
         if had_tracks:
             logger.info(
                 "Playback stopped and queue cleared",
@@ -176,6 +174,7 @@ class GuildPlayer:
                 track = self._queue.popleft()
                 self.current_track = track
                 self._cancel_current = False
+                self.playback_state = "resolving"
                 try:
                     await self._play(track)
                 except asyncio.CancelledError:
@@ -191,6 +190,7 @@ class GuildPlayer:
                     )
                 finally:
                     self.current_track = None
+                    self.playback_state = "idle"
 
             self._queue_ready.clear()
 
@@ -211,6 +211,8 @@ class GuildPlayer:
             options=effect.ffmpeg_options(FFMPEG_OPTIONS),
         )
         playback_finished = asyncio.Event()
+        self._active_source = source
+        self._playback_finished = playback_finished
         loop = asyncio.get_running_loop()
 
         def after_playback(error: Exception | None) -> None:
@@ -237,6 +239,7 @@ class GuildPlayer:
                 application=effect.opus_application,
                 signal_type=effect.opus_signal_type,
             )
+            self.playback_state = "playing"
             logger.info(
                 "Track playback started",
                 extra={
@@ -250,7 +253,13 @@ class GuildPlayer:
         except Exception:
             source.cleanup()
             raise
-        await playback_finished.wait()
+        try:
+            await playback_finished.wait()
+        finally:
+            if self._active_source is source:
+                self._active_source = None
+            if self._playback_finished is playback_finished:
+                self._playback_finished = None
         logger.info(
             "Track playback finished",
             extra={
@@ -261,3 +270,17 @@ class GuildPlayer:
                 "duration_ms": round((time.perf_counter() - started_at) * 1000),
             },
         )
+
+    def _terminate_active_playback(self) -> None:
+        voice_client = self._voice_client
+        if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+            voice_client.stop()
+
+        source = self._active_source
+        if source is not None:
+            source.cleanup()
+            self._active_source = None
+
+        playback_finished = self._playback_finished
+        if playback_finished is not None:
+            playback_finished.set()
