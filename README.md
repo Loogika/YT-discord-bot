@@ -73,6 +73,21 @@ Useful Loki queries in Grafana Explore:
 On a VPS, port `3000` remains bound to localhost. Access it through an SSH
 tunnel or place an authenticated HTTPS reverse proxy in front of Grafana.
 
+Before VPS deployment, run the read-only audit script:
+
+```bash
+bash scripts/vps-audit.sh
+```
+
+The optional systemd unit in `deploy/loogikabot.service` starts the complete
+Compose stack from `/opt/loogikabot` after reboot.
+
+After cloning the repository and creating `.env`, deploy with:
+
+```bash
+bash scripts/vps-deploy.sh
+```
+
 The Dockerfile uses two stages:
 
 - `builder` installs Python dependencies and downloads Deno
@@ -88,6 +103,7 @@ Docker build context.
 - `/pause` - pause playback
 - `/resume` - resume playback
 - `/stop` - stop playback and clear the queue
+- `/effect preset` - set `normal`, `phone`, `crushed`, or `radio` for upcoming tracks
 - `/queue` - show the current queue
 - `/now-playing` - show the current track
 - `/leave` - disconnect the bot
@@ -107,6 +123,10 @@ chooses one from the dropdown before the bot joins voice and queues it.
 - `observability/` - Alloy, Loki, and provisioned Grafana configuration
 - `docs/known-issues.md` - stable descriptions of z1-z5
 - `docs/yt-dlp-options.md` - yt-dlp option rationale and future candidates
+- `scripts/vps-audit.sh` - compact read-only VPS environment report
+- `scripts/vps-deploy.sh` - validate, build, and start the VPS Compose stack
+- `deploy/loogikabot.service` - optional Compose autostart unit for VPS
+- `docs/vps-deployment.md` - VPS deployment and verification runbook
 
 ## Discord Developer Portal
 

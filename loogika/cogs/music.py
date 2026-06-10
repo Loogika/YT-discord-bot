@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from loogika.cogs.music_search import TrackSearchView, build_search_embed
+from loogika.music.effects import get_audio_effect
 from loogika.music.models import Track
 from loogika.music.player import GuildPlayer
 
@@ -216,6 +217,37 @@ class MusicCog(commands.Cog):
             return
         await interaction.response.send_message("Playback stopped and queue cleared.")
 
+    @app_commands.command(name="effect", description="Set the audio effect for upcoming tracks")
+    @app_commands.describe(preset="Audio effect preset")
+    @app_commands.choices(
+        preset=[
+            app_commands.Choice(name="Normal", value="normal"),
+            app_commands.Choice(name="Phone", value="phone"),
+            app_commands.Choice(name="Crushed MP3", value="crushed"),
+            app_commands.Choice(name="Radio", value="radio"),
+        ]
+    )
+    @app_commands.guild_only()
+    async def effect(
+        self,
+        interaction: discord.Interaction,
+        preset: app_commands.Choice[str],
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Music commands can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        effect = get_audio_effect(preset.value)
+        player = self.bot.players.get(interaction.guild.id)
+        player.set_audio_effect(effect)
+        await interaction.response.send_message(
+            f"Audio effect set to **{preset.name}**. "
+            "It will apply when the next track starts."
+        )
+
     @app_commands.command(name="queue", description="Show the current music queue")
     @app_commands.guild_only()
     async def queue(self, interaction: discord.Interaction) -> None:
@@ -254,7 +286,8 @@ class MusicCog(commands.Cog):
             )
             return
         await interaction.response.send_message(
-            f"Now playing: [{track.title}]({track.webpage_url})"
+            f"Now playing: [{track.title}]({track.webpage_url})\n"
+            f"Effect: **{player.audio_effect.name}**"
         )
 
     @app_commands.command(name="leave", description="Leave the voice channel")

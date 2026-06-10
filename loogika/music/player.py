@@ -6,6 +6,7 @@ from collections import deque
 import discord
 
 from loogika.config import FFMPEG_BEFORE_OPTIONS, FFMPEG_OPTIONS
+from loogika.music.effects import AudioEffect, DEFAULT_AUDIO_EFFECT
 from loogika.music.extractor import TrackExtractor
 from loogika.music.models import Track
 
@@ -18,6 +19,7 @@ class GuildPlayer:
         self.guild_id = guild_id
         self.extractor = extractor
         self.current_track: Track | None = None
+        self.audio_effect = DEFAULT_AUDIO_EFFECT
 
         self._queue: deque[Track] = deque()
         self._voice_client: discord.VoiceClient | None = None
@@ -66,6 +68,17 @@ class GuildPlayer:
 
     def queue_snapshot(self) -> tuple[Track, ...]:
         return tuple(self._queue)
+
+    def set_audio_effect(self, effect: AudioEffect) -> None:
+        self.audio_effect = effect
+        logger.info(
+            "Audio effect changed",
+            extra={
+                "event": "audio.effect.changed",
+                "guild_id": self.guild_id,
+                "audio_effect": effect.name,
+            },
+        )
 
     def skip(self) -> bool:
         voice_client = self._voice_client
@@ -183,6 +196,7 @@ class GuildPlayer:
 
     async def _play(self, track: Track) -> None:
         started_at = time.perf_counter()
+        effect = self.audio_effect
         stream_url = await self.extractor.resolve_stream(track)
         if self._cancel_current:
             return
@@ -194,7 +208,7 @@ class GuildPlayer:
         source = discord.FFmpegPCMAudio(
             stream_url,
             before_options=FFMPEG_BEFORE_OPTIONS,
-            options=FFMPEG_OPTIONS,
+            options=effect.ffmpeg_options(FFMPEG_OPTIONS),
         )
         playback_finished = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -215,13 +229,22 @@ class GuildPlayer:
             loop.call_soon_threadsafe(playback_finished.set)
 
         try:
-            voice_client.play(source, after=after_playback)
+            voice_client.play(
+                source,
+                after=after_playback,
+                bitrate=effect.opus_bitrate,
+                bandwidth=effect.opus_bandwidth,
+                application=effect.opus_application,
+                signal_type=effect.opus_signal_type,
+            )
             logger.info(
                 "Track playback started",
                 extra={
                     "event": "playback.started",
                     "guild_id": self.guild_id,
                     "track_title": track.title,
+                    "audio_effect": effect.name,
+                    "opus_bitrate": effect.opus_bitrate,
                 },
             )
         except Exception:
@@ -234,6 +257,7 @@ class GuildPlayer:
                 "event": "playback.finished",
                 "guild_id": self.guild_id,
                 "track_title": track.title,
+                "audio_effect": effect.name,
                 "duration_ms": round((time.perf_counter() - started_at) * 1000),
             },
         )
