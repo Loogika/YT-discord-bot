@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from loogika.cogs.music_search import build_search_embed, format_duration
+from loogika.config import YTDL_STREAM_M4A_OPTIONS, YTDL_STREAM_OPUS_OPTIONS
 from loogika.music.extractor import TrackExtractor
 from loogika.music.models import Track
 
@@ -54,6 +55,28 @@ class TrackSearchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(embed.fields), 10)
         self.assertEqual(format_duration(125), "2:05")
+
+    async def test_stream_strategy_selects_matching_format_options(self) -> None:
+        extractor = TrackExtractor()
+        track = Track(
+            title="Track",
+            webpage_url="https://www.youtube.com/watch?v=abc",
+            requested_by="user",
+        )
+        result = {
+            "url": "https://example.googlevideo.com/audio",
+            "format_id": "140",
+            "protocol": "https",
+            "acodec": "mp4a.40.2",
+        }
+
+        with patch.object(TrackExtractor, "_extract_one", return_value=result) as extract:
+            stream = await extractor.resolve_stream(track, "m4a")
+
+        self.assertEqual(stream.strategy, "m4a")
+        self.assertEqual(stream.format_id, "140")
+        self.assertIs(extract.call_args.args[1], YTDL_STREAM_M4A_OPTIONS)
+        self.assertIsNot(YTDL_STREAM_M4A_OPTIONS, YTDL_STREAM_OPUS_OPTIONS)
 
 
 if __name__ == "__main__":

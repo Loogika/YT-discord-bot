@@ -19,11 +19,19 @@ YTDL_SEARCH_OPTIONS = {
     "skip_download": True,
 }
 
-YTDL_STREAM_OPTIONS = {
+YTDL_STREAM_OPUS_OPTIONS = {
     **YTDL_BASE_OPTIONS,
-    "format": "bestaudio[protocol^=http][vcodec=none]/bestaudio[protocol^=http]/bestaudio/best",
+    "format": "bestaudio[acodec=opus][protocol^=http]/bestaudio[protocol^=http][vcodec=none]/bestaudio/best",
     "skip_download": True,
 }
+
+YTDL_STREAM_M4A_OPTIONS = {
+    **YTDL_BASE_OPTIONS,
+    "format": "bestaudio[ext=m4a][protocol^=http]/bestaudio[acodec^=mp4a][protocol^=http]/bestaudio/best",
+    "skip_download": True,
+}
+
+YTDL_STREAM_OPTIONS = YTDL_STREAM_OPUS_OPTIONS
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 FFMPEG_OPTIONS = "-vn"

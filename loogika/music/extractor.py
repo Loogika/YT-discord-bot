@@ -6,8 +6,13 @@ from urllib.parse import urlparse
 
 import yt_dlp
 
-from loogika.config import YTDL_SEARCH_OPTIONS, YTDL_STREAM_OPTIONS
-from loogika.music.models import Track
+from loogika.config import (
+    YTDL_SEARCH_OPTIONS,
+    YTDL_STREAM_M4A_OPTIONS,
+    YTDL_STREAM_OPTIONS,
+    YTDL_STREAM_OPUS_OPTIONS,
+)
+from loogika.music.models import Stream, Track
 
 
 logger = logging.getLogger(__name__)
@@ -123,20 +128,27 @@ class TrackExtractor:
         )
         return track
 
-    async def resolve_stream(self, track: Track) -> str:
+    async def resolve_stream(self, track: Track, strategy: str = "opus") -> Stream:
         started_at = time.perf_counter()
+        stream_options = {
+            "opus": YTDL_STREAM_OPUS_OPTIONS,
+            "m4a": YTDL_STREAM_M4A_OPTIONS,
+        }.get(strategy)
+        if stream_options is None:
+            raise ValueError(f"Unknown stream strategy: {strategy}")
         logger.info(
             "Stream resolution started",
             extra={
                 "event": "track.stream.resolve.started",
                 "track_title": track.title,
+                "stream_strategy": strategy,
             },
         )
         try:
             data = await asyncio.to_thread(
                 self._extract_one,
                 track.webpage_url,
-                YTDL_STREAM_OPTIONS,
+                stream_options,
             )
         except Exception as exc:
             logger.exception(
@@ -146,25 +158,35 @@ class TrackExtractor:
                     "duration_ms": round((time.perf_counter() - started_at) * 1000),
                     "track_title": track.title,
                     "error_code": classify_extraction_error(exc),
+                    "stream_strategy": strategy,
                 },
             )
             raise
         stream_url = data.get("url")
         if not stream_url:
             raise RuntimeError("The audio stream URL is missing.")
+        stream = Stream(
+            url=stream_url,
+            strategy=strategy,
+            format_id=data.get("format_id"),
+            protocol=data.get("protocol"),
+            audio_codec=data.get("acodec"),
+            host=urlparse(stream_url).hostname,
+        )
         logger.info(
             "Stream resolution completed",
             extra={
                 "event": "track.stream.resolve.completed",
                 "duration_ms": round((time.perf_counter() - started_at) * 1000),
                 "track_title": track.title,
-                "format_id": data.get("format_id"),
-                "protocol": data.get("protocol"),
-                "audio_codec": data.get("acodec"),
-                "stream_host": urlparse(stream_url).hostname,
+                "stream_strategy": stream.strategy,
+                "format_id": stream.format_id,
+                "protocol": stream.protocol,
+                "audio_codec": stream.audio_codec,
+                "stream_host": stream.host,
             },
         )
-        return stream_url
+        return stream
 
     @staticmethod
     def _extract_collection(query: str, base_options: dict[str, Any]) -> dict[str, Any]:

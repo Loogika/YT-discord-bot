@@ -9,7 +9,7 @@ import discord
 from loogika.config import FFMPEG_BEFORE_OPTIONS, FFMPEG_OPTIONS
 from loogika.music.effects import AudioEffect, DEFAULT_AUDIO_EFFECT
 from loogika.music.extractor import TrackExtractor
-from loogika.music.models import Track
+from loogika.music.models import Stream, Track
 
 
 logger = logging.getLogger(__name__)
@@ -222,8 +222,9 @@ class GuildPlayer:
 
     async def _play(self, track: Track) -> None:
         for attempt in range(1, PLAYBACK_ATTEMPTS + 1):
+            strategy = "opus" if attempt == 1 else "m4a"
             try:
-                await self._play_once(track, attempt)
+                await self._play_once(track, attempt, strategy)
                 return
             except PlaybackStartupError:
                 if self._cancel_current or attempt == PLAYBACK_ATTEMPTS:
@@ -235,13 +236,14 @@ class GuildPlayer:
                         "guild_id": self.guild_id,
                         "track_title": track.title,
                         "attempt": attempt + 1,
+                        "stream_strategy": "m4a",
                     },
                 )
 
-    async def _play_once(self, track: Track, attempt: int) -> None:
+    async def _play_once(self, track: Track, attempt: int, strategy: str) -> None:
         started_at = time.perf_counter()
         effect = self.audio_effect
-        stream_url = await self.extractor.resolve_stream(track)
+        stream = await self.extractor.resolve_stream(track, strategy)
         if self._cancel_current:
             return
 
@@ -251,7 +253,7 @@ class GuildPlayer:
 
         source = StartupTrackingSource(
             discord.FFmpegPCMAudio(
-                stream_url,
+                stream.url,
                 before_options=FFMPEG_BEFORE_OPTIONS,
                 options=effect.ffmpeg_options(FFMPEG_OPTIONS),
             )
@@ -295,6 +297,7 @@ class GuildPlayer:
                     "audio_effect": effect.name,
                     "opus_bitrate": effect.opus_bitrate,
                     "attempt": attempt,
+                    **self._stream_log_context(stream),
                 },
             )
         except Exception:
@@ -314,6 +317,7 @@ class GuildPlayer:
                             "track_title": track.title,
                             "attempt": attempt,
                             "timeout_seconds": PLAYBACK_STARTUP_TIMEOUT_SECONDS,
+                            **self._stream_log_context(stream),
                         },
                     )
                     self._terminate_active_playback()
@@ -330,6 +334,17 @@ class GuildPlayer:
                     "FFmpeg playback ended before producing an audio frame."
                 )
 
+            logger.info(
+                "FFmpeg produced the first audio frame",
+                extra={
+                    "event": "playback.startup.completed",
+                    "guild_id": self.guild_id,
+                    "track_title": track.title,
+                    "attempt": attempt,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                    **self._stream_log_context(stream),
+                },
+            )
             await playback_finished.wait()
         finally:
             if self._active_source is source:
@@ -344,8 +359,20 @@ class GuildPlayer:
                 "track_title": track.title,
                 "audio_effect": effect.name,
                 "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                "attempt": attempt,
+                **self._stream_log_context(stream),
             },
         )
+
+    @staticmethod
+    def _stream_log_context(stream: Stream) -> dict[str, str | None]:
+        return {
+            "stream_strategy": stream.strategy,
+            "format_id": stream.format_id,
+            "protocol": stream.protocol,
+            "audio_codec": stream.audio_codec,
+            "stream_host": stream.host,
+        }
 
     def _terminate_active_playback(self) -> None:
         voice_client = self._voice_client

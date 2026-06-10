@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from loogika.music.manager import PlayerManager
-from loogika.music.models import Track
+from loogika.music.models import Stream, Track
 from loogika.music.player import GuildPlayer
 
 
@@ -11,14 +11,23 @@ class FakeExtractor:
     def __init__(self) -> None:
         self.resolve_started = asyncio.Event()
         self.allow_resolve = asyncio.Event()
+        self.strategies: list[str] = []
 
     async def find_track(self, query: str, requested_by: str) -> Track:
         return Track(title=query, webpage_url=query, requested_by=requested_by)
 
-    async def resolve_stream(self, track: Track) -> str:
+    async def resolve_stream(self, track: Track, strategy: str = "opus") -> Stream:
+        self.strategies.append(strategy)
         self.resolve_started.set()
         await self.allow_resolve.wait()
-        return "stream-url"
+        return Stream(
+            url="stream-url",
+            strategy=strategy,
+            format_id="251" if strategy == "opus" else "140",
+            protocol="https",
+            audio_codec="opus" if strategy == "opus" else "mp4a.40.2",
+            host="example.googlevideo.com",
+        )
 
 
 class FakeVoiceClient:
@@ -115,6 +124,7 @@ class GuildPlayerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.25)
 
         self.assertEqual(voice_client.play_calls, 2)
+        self.assertEqual(extractor.strategies, ["opus", "m4a"])
         self.assertIsNone(player.current_track)
         self.assertEqual(player.playback_state, "idle")
         await player.close()

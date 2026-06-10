@@ -9,3 +9,13 @@ class Track:
     duration: int | None = None
     uploader: str | None = None
     thumbnail_url: str | None = None
+
+
+@dataclass(frozen=True)
+class Stream:
+    url: str
+    strategy: str
+    format_id: str | None
+    protocol: str | None
+    audio_codec: str | None
+    host: str | None
