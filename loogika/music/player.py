@@ -45,6 +45,9 @@ class GuildPlayer:
 
     async def enqueue(self, query: str, requested_by: str) -> tuple[Track, int]:
         track = await self.extractor.find_track(query, requested_by)
+        return self.enqueue_track(track)
+
+    def enqueue_track(self, track: Track) -> tuple[Track, int]:
         tracks_ahead = len(self._queue) + (1 if self.current_track else 0)
         self._queue.append(track)
         self._queue_ready.set()

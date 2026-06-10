@@ -4,12 +4,25 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 
-YTDL_OPTIONS = {
-    "format": "bestaudio/best",
+YTDL_BASE_OPTIONS = {
     "noplaylist": True,
     "quiet": True,
-    "default_search": "auto",
     "source_address": "0.0.0.0",
+    "socket_timeout": 20,
+    "retries": 3,
+    "fragment_retries": 3,
+}
+
+YTDL_SEARCH_OPTIONS = {
+    **YTDL_BASE_OPTIONS,
+    "extract_flat": "in_playlist",
+    "skip_download": True,
+}
+
+YTDL_STREAM_OPTIONS = {
+    **YTDL_BASE_OPTIONS,
+    "format": "bestaudio[protocol^=http][vcodec=none]/bestaudio[protocol^=http]/bestaudio/best",
+    "skip_download": True,
 }
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"

@@ -92,7 +92,9 @@ Docker build context.
 - `/now-playing` - show the current track
 - `/leave` - disconnect the bot
 
-`query` can be a YouTube URL or search text. The bot joins your current voice channel and starts playing the found audio stream.
+`query` can be a YouTube URL or search text. A direct URL is queued immediately.
+Text search returns up to ten YouTube video candidates in an embed; the user
+chooses one from the dropdown before the bot joins voice and queues it.
 
 ## Project structure
 
@@ -103,6 +105,8 @@ Docker build context.
 - `Dockerfile` - two-stage production image
 - `compose.yaml` - local and VPS container orchestration
 - `observability/` - Alloy, Loki, and provisioned Grafana configuration
+- `docs/known-issues.md` - stable descriptions of z1-z5
+- `docs/yt-dlp-options.md` - yt-dlp option rationale and future candidates
 
 ## Discord Developer Portal
 

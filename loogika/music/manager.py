@@ -12,6 +12,10 @@ class PlayerManager:
         self._extractor = extractor
         self._players: dict[int, GuildPlayer] = {}
 
+    @property
+    def extractor(self) -> TrackExtractor:
+        return self._extractor
+
     def get(self, guild_id: int) -> GuildPlayer:
         player = self._players.get(guild_id)
         if player is None:

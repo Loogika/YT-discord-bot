@@ -6,6 +6,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from loogika.cogs.music_search import TrackSearchView, build_search_embed
+from loogika.music.models import Track
 from loogika.music.player import GuildPlayer
 
 if TYPE_CHECKING:
@@ -68,6 +70,42 @@ class MusicCog(commands.Cog):
         player.bind_voice_client(voice_client)
         return player
 
+    async def _enqueue_selected_track(
+        self,
+        interaction: discord.Interaction,
+        track: Track,
+    ) -> None:
+        try:
+            player = await self._connect_player(interaction)
+            if player is None:
+                return
+            queued_track, tracks_ahead = player.enqueue_track(track)
+        except Exception as exc:
+            logger.exception(
+                "Selected track enqueue failed",
+                extra={
+                    "event": "track.candidates.enqueue.failed",
+                    "interaction_id": interaction.id,
+                    "guild_id": interaction.guild_id,
+                    "track_title": track.title,
+                },
+            )
+            await interaction.followup.send(
+                f"Could not queue track: {exc}",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            self._queued_track_message(queued_track, tracks_ahead)
+        )
+
+    @staticmethod
+    def _queued_track_message(track: Track, tracks_ahead: int) -> str:
+        if tracks_ahead:
+            return f"Queued #{tracks_ahead}: [{track.title}]({track.webpage_url})"
+        return f"Now playing: [{track.title}]({track.webpage_url})"
+
     @app_commands.command(
         name="play",
         description="Play audio from a YouTube URL or search query",
@@ -88,10 +126,27 @@ class MusicCog(commands.Cog):
         )
 
         try:
+            if not query.startswith(("http://", "https://")):
+                tracks = await self.bot.players.extractor.search_tracks(
+                    query=query,
+                    requested_by=interaction.user.display_name,
+                )
+                view = TrackSearchView(
+                    requester_id=interaction.user.id,
+                    tracks=tracks,
+                    on_select=self._enqueue_selected_track,
+                )
+                message = await interaction.followup.send(
+                    embed=build_search_embed(query, tracks),
+                    view=view,
+                    wait=True,
+                )
+                view.message = message
+                return
+
             player = await self._connect_player(interaction)
             if player is None:
                 return
-
             track, tracks_ahead = await player.enqueue(
                 query=query,
                 requested_by=interaction.user.display_name,
@@ -111,14 +166,7 @@ class MusicCog(commands.Cog):
             )
             return
 
-        if tracks_ahead:
-            await interaction.followup.send(
-                f"Queued #{tracks_ahead}: [{track.title}]({track.webpage_url})"
-            )
-        else:
-            await interaction.followup.send(
-                f"Now playing: [{track.title}]({track.webpage_url})"
-            )
+        await interaction.followup.send(self._queued_track_message(track, tracks_ahead))
 
     @app_commands.command(name="skip", description="Skip the current track")
     @app_commands.guild_only()
