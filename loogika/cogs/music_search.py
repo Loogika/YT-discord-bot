@@ -96,8 +96,12 @@ class TrackSearchView(discord.ui.View):
 
     async def select_track(self, interaction: discord.Interaction, index: int) -> None:
         await interaction.response.defer()
-        self.disable_components()
-        await interaction.edit_original_response(view=self)
+        try:
+            await interaction.delete_original_response()
+            self.message = None
+        except discord.HTTPException:
+            self.disable_components()
+            await interaction.edit_original_response(view=self)
         self.stop()
 
         track = self.tracks[index]
