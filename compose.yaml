@@ -48,6 +48,8 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_DOMAIN: loogika.ru
+      GF_SERVER_ROOT_URL: "https://loogika.ru/"
     ports:
       - 127.0.0.1:3000:3000
     volumes:
