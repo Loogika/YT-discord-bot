@@ -49,6 +49,49 @@ SSH tunnel:
 ssh -L 3000:127.0.0.1:3000 user@server
 ```
 
+## Expose Grafana on loogika.ru
+
+Keep the Grafana container bound to `127.0.0.1:3000` and expose it through
+Nginx on the VPS. This makes Grafana available at `https://loogika.ru/` without
+publishing port `3000` to the internet.
+
+First, make sure DNS `A` records for `loogika.ru` and `www.loogika.ru` point to
+the VPS public IP. Then install Nginx and Certbot:
+
+```bash
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
+Create the first certificate. Stop Nginx temporarily so Certbot can bind port
+`80` for the domain check:
+
+```bash
+sudo systemctl stop nginx
+sudo certbot certonly --standalone -d loogika.ru -d www.loogika.ru
+sudo systemctl start nginx
+```
+
+Install the project Nginx config and reload Nginx:
+
+```bash
+sudo cp /opt/loogikabot/deploy/nginx-loogika-grafana.conf /etc/nginx/sites-available/loogika.ru
+sudo ln -sf /etc/nginx/sites-available/loogika.ru /etc/nginx/sites-enabled/loogika.ru
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Deploy the Compose stack so Grafana uses the public root URL from
+`compose.yaml`:
+
+```bash
+cd /opt/loogikabot
+docker compose up -d --build
+```
+
+Open `https://loogika.ru/` and sign in as `admin` with the
+`GRAFANA_ADMIN_PASSWORD` value from `.env`.
+
 ## Optional autostart
 
 Install `deploy/loogikabot.service` as `/etc/systemd/system/loogikabot.service`,
