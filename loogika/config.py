@@ -27,7 +27,8 @@ YTDL_STREAM_OPUS_OPTIONS = {
 
 YTDL_STREAM_M4A_OPTIONS = {
     **YTDL_BASE_OPTIONS,
-    "format": "bestaudio[ext=m4a][protocol^=http]/bestaudio[acodec^=mp4a][protocol^=http]/bestaudio/best",
+    "format": "bestaudio[vcodec=none]/bestaudio/best",
+    "extractor_args": {"youtube": {"player_client": ["web_safari", "android"]}},
     "skip_download": True,
 }
 

@@ -76,14 +76,17 @@ class LoogikaBot(commands.Bot):
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
             if clear_stale and self.application_id is not None:
-                await self.http.bulk_upsert_global_commands(self.application_id, [])
-                logger.info(
-                    "Cleared global slash commands to avoid stale duplicates",
-                    extra={
-                        "event": "bot.commands.cleared_global",
-                        "guild_id": guild_id,
-                    },
-                )
+                existing_global = await self.tree.fetch_commands()
+                if existing_global:
+                    await self.http.bulk_upsert_global_commands(self.application_id, [])
+                    logger.info(
+                        "Cleared global slash commands to avoid stale duplicates",
+                        extra={
+                            "event": "bot.commands.cleared_global",
+                            "guild_id": guild_id,
+                            "cleared_count": len(existing_global),
+                        },
+                    )
             logger.info(
                 "Slash commands synchronized",
                 extra={
