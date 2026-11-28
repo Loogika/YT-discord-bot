@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 
 import discord
 
@@ -18,10 +19,16 @@ PLAYBACK_STARTUP_TIMEOUT_SECONDS = 10
 PLAYBACK_ATTEMPTS = 2
 
 
+TrackStartedCallback = Callable[[Track, AudioEffect], Awaitable[None]]
+TrackFinishedCallback = Callable[[Track, bool], Awaitable[None]]
+
+
 class StartupTrackingSource(discord.AudioSource):
     def __init__(self, source: discord.AudioSource) -> None:
         self.source = source
         self.first_frame = threading.Event()
+        self._cleanup_lock = threading.Lock()
+        self._cleaned_up = False
 
     def read(self) -> bytes:
         data = self.source.read()
@@ -33,6 +40,10 @@ class StartupTrackingSource(discord.AudioSource):
         return self.source.is_opus()
 
     def cleanup(self) -> None:
+        with self._cleanup_lock:
+            if self._cleaned_up:
+                return
+            self._cleaned_up = True
         self.source.cleanup()
 
 
@@ -54,7 +65,22 @@ class GuildPlayer:
         self._cancel_current = False
         self._active_source: discord.AudioSource | None = None
         self._playback_finished: asyncio.Event | None = None
+        self._on_track_started: TrackStartedCallback | None = None
+        self._on_track_finished: TrackFinishedCallback | None = None
+        self._track_started_emitted = False
         self.playback_state = "idle"
+
+    def set_callbacks(
+        self,
+        *,
+        on_track_started: TrackStartedCallback | None = None,
+        on_track_finished: TrackFinishedCallback | None = None,
+    ) -> None:
+        self._on_track_started = on_track_started
+        self._on_track_finished = on_track_finished
+
+    def is_paused(self) -> bool:
+        return bool(self._voice_client and self._voice_client.is_paused())
 
     def bind_voice_client(self, voice_client: discord.VoiceClient) -> None:
         self._voice_client = voice_client
@@ -74,8 +100,18 @@ class GuildPlayer:
         if self._queue:
             self._queue_ready.set()
 
-    async def enqueue(self, query: str, requested_by: str) -> tuple[Track, int]:
-        track = await self.extractor.find_track(query, requested_by)
+    async def enqueue(
+        self,
+        query: str,
+        requested_by: str,
+        *,
+        requested_by_id: int | None = None,
+    ) -> tuple[Track, int]:
+        track = await self.extractor.find_track(
+            query,
+            requested_by,
+            requested_by_id=requested_by_id,
+        )
         return self.enqueue_track(track)
 
     def enqueue_track(self, track: Track) -> tuple[Track, int]:
@@ -200,10 +236,13 @@ class GuildPlayer:
                 track = self._queue.popleft()
                 self.current_track = track
                 self._cancel_current = False
+                self._track_started_emitted = False
                 self.playback_state = "resolving"
+                cancelled = False
                 try:
                     await self._play(track)
                 except asyncio.CancelledError:
+                    cancelled = True
                     raise
                 except Exception:
                     logger.exception(
@@ -215,8 +254,13 @@ class GuildPlayer:
                         },
                     )
                 finally:
+                    was_started = self._track_started_emitted
+                    was_skipped = self._cancel_current
+                    self._track_started_emitted = False
                     self.current_track = None
                     self.playback_state = "idle"
+                    if was_started and not cancelled:
+                        await self._emit_track_finished(track, was_skipped)
 
             self._queue_ready.clear()
 
@@ -345,6 +389,7 @@ class GuildPlayer:
                     **self._stream_log_context(stream),
                 },
             )
+            await self._emit_track_started(track, effect)
             await playback_finished.wait()
         finally:
             if self._active_source is source:
@@ -363,6 +408,37 @@ class GuildPlayer:
                 **self._stream_log_context(stream),
             },
         )
+
+    async def _emit_track_started(self, track: Track, effect: AudioEffect) -> None:
+        self._track_started_emitted = True
+        if self._on_track_started is None:
+            return
+        try:
+            await self._on_track_started(track, effect)
+        except Exception:
+            logger.exception(
+                "Track started callback failed",
+                extra={
+                    "event": "playback.callback.started.failed",
+                    "guild_id": self.guild_id,
+                    "track_title": track.title,
+                },
+            )
+
+    async def _emit_track_finished(self, track: Track, was_skipped: bool) -> None:
+        if self._on_track_finished is None:
+            return
+        try:
+            await self._on_track_finished(track, was_skipped)
+        except Exception:
+            logger.exception(
+                "Track finished callback failed",
+                extra={
+                    "event": "playback.callback.finished.failed",
+                    "guild_id": self.guild_id,
+                    "track_title": track.title,
+                },
+            )
 
     @staticmethod
     def _stream_log_context(stream: Stream) -> dict[str, str | None]:

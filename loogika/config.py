@@ -42,6 +42,7 @@ class Settings:
     token: str
     guild_id: int | None
     log_level: str = "INFO"
+    clear_stale_commands: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -52,8 +53,10 @@ class Settings:
             raise RuntimeError("DISCORD_TOKEN is not set. Create .env from .env.example.")
 
         guild_id = os.getenv("DISCORD_GUILD_ID")
+        clear_stale = os.getenv("DISCORD_CLEAR_STALE_COMMANDS", "true").strip().lower()
         return cls(
             token=token,
             guild_id=int(guild_id) if guild_id else None,
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            clear_stale_commands=clear_stale not in {"0", "false", "no", "off"},
         )

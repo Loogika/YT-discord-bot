@@ -3,22 +3,13 @@ from collections.abc import Awaitable, Callable
 
 import discord
 
+from loogika.cogs.music_ui import format_duration
 from loogika.music.models import Track
 
 
 logger = logging.getLogger(__name__)
 
 TrackSelectionHandler = Callable[[discord.Interaction, Track], Awaitable[None]]
-
-
-def format_duration(seconds: int | None) -> str:
-    if seconds is None:
-        return "unknown"
-    minutes, remaining_seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{remaining_seconds:02d}"
-    return f"{minutes}:{remaining_seconds:02d}"
 
 
 def build_search_embed(query: str, tracks: tuple[Track, ...]) -> discord.Embed:
@@ -33,9 +24,12 @@ def build_search_embed(query: str, tracks: tuple[Track, ...]) -> discord.Embed:
             for value in (track.uploader, format_duration(track.duration))
             if value
         )
+        value_line = f"[Open on YouTube]({track.webpage_url})"
+        if details:
+            value_line = f"{value_line} · {details}"
         embed.add_field(
             name=f"{index}. {track.title[:240]}",
-            value=f"[Open on YouTube]({track.webpage_url}) · {details}",
+            value=value_line,
             inline=False,
         )
     embed.set_footer(text="Only the user who ran /play can choose a track.")
@@ -78,6 +72,7 @@ class TrackSearchView(discord.ui.View):
         self.tracks = tracks
         self.on_select = on_select
         self.message: discord.Message | None = None
+        self._selected = False
         self.add_item(TrackSelect(tracks))
 
     def disable_components(self) -> None:
@@ -95,14 +90,22 @@ class TrackSearchView(discord.ui.View):
         return False
 
     async def select_track(self, interaction: discord.Interaction, index: int) -> None:
+        if self._selected:
+            await interaction.response.defer()
+            return
+        self._selected = True
+        self.stop()
+
         await interaction.response.defer()
         try:
             await interaction.delete_original_response()
             self.message = None
         except discord.HTTPException:
             self.disable_components()
-            await interaction.edit_original_response(view=self)
-        self.stop()
+            try:
+                await interaction.edit_original_response(view=self)
+            except discord.HTTPException:
+                pass
 
         track = self.tracks[index]
         logger.info(

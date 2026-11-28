@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from loogika.music.manager import PlayerManager
 from loogika.music.models import Stream, Track
-from loogika.music.player import GuildPlayer
+from loogika.music.player import GuildPlayer, StartupTrackingSource
 
 
 class FakeExtractor:
@@ -13,8 +13,19 @@ class FakeExtractor:
         self.allow_resolve = asyncio.Event()
         self.strategies: list[str] = []
 
-    async def find_track(self, query: str, requested_by: str) -> Track:
-        return Track(title=query, webpage_url=query, requested_by=requested_by)
+    async def find_track(
+        self,
+        query: str,
+        requested_by: str,
+        *,
+        requested_by_id: int | None = None,
+    ) -> Track:
+        return Track(
+            title=query,
+            webpage_url=query,
+            requested_by=requested_by,
+            requested_by_id=requested_by_id,
+        )
 
     async def resolve_stream(self, track: Track, strategy: str = "opus") -> Stream:
         self.strategies.append(strategy)
@@ -58,11 +69,20 @@ class FakeVoiceClient:
 
 
 class FakeSource:
-    def __init__(self) -> None:
+    def __init__(self, frame: bytes = b"") -> None:
         self.cleaned_up = False
+        self.cleanup_calls = 0
+        self.frame = frame
+
+    def read(self) -> bytes:
+        return self.frame
+
+    def is_opus(self) -> bool:
+        return False
 
     def cleanup(self) -> None:
         self.cleaned_up = True
+        self.cleanup_calls += 1
 
 
 class GuildPlayerTests(unittest.IsolatedAsyncioTestCase):
@@ -136,6 +156,49 @@ class GuildPlayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(manager.get(1), manager.get(2))
 
         await manager.close()
+
+    async def test_startup_tracking_source_cleanup_is_idempotent(self) -> None:
+        inner = FakeSource()
+        wrapped = StartupTrackingSource(inner)  # type: ignore[arg-type]
+
+        wrapped.cleanup()
+        wrapped.cleanup()
+
+        self.assertEqual(inner.cleanup_calls, 1)
+
+    async def test_track_callbacks_fire_on_playback_start_and_skip(self) -> None:
+        extractor = FakeExtractor()
+        extractor.allow_resolve.set()
+        voice_client = FakeVoiceClient()
+        source = FakeSource(frame=b"pcm-data")
+        player = GuildPlayer(1, extractor)  # type: ignore[arg-type]
+        player.bind_voice_client(voice_client)  # type: ignore[arg-type]
+
+        started_tracks: list[str] = []
+        finished_events: list[tuple[str, bool]] = []
+
+        async def on_started(track: Track, _effect: object) -> None:
+            started_tracks.append(track.title)
+
+        async def on_finished(track: Track, was_skipped: bool) -> None:
+            finished_events.append((track.title, was_skipped))
+
+        player.set_callbacks(on_track_started=on_started, on_track_finished=on_finished)
+
+        with patch("loogika.music.player.discord.FFmpegPCMAudio", return_value=source):
+            await player.enqueue("track-1", "alice", requested_by_id=42)
+            await voice_client.play_started.wait()
+            # Simulate audio frame read so startup completes and on_started fires.
+            assert player._active_source is not None
+            player._active_source.read()
+            await asyncio.sleep(0.15)
+
+            self.assertEqual(started_tracks, ["track-1"])
+            self.assertTrue(player.skip())
+            await asyncio.sleep(0.05)
+
+        self.assertEqual(finished_events, [("track-1", True)])
+        await player.close()
 
 
 if __name__ == "__main__":

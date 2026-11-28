@@ -47,7 +47,14 @@ class YtdlpLogger:
 
 
 class TrackExtractor:
-    async def search_tracks(self, query: str, requested_by: str, limit: int = 10) -> tuple[Track, ...]:
+    async def search_tracks(
+        self,
+        query: str,
+        requested_by: str,
+        limit: int = 10,
+        *,
+        requested_by_id: int | None = None,
+    ) -> tuple[Track, ...]:
         started_at = time.perf_counter()
         logger.info(
             "Track candidate search started",
@@ -75,7 +82,7 @@ class TrackExtractor:
             raise
 
         tracks = tuple(
-            self._track_from_data(entry, requested_by)
+            self._track_from_data(entry, requested_by, requested_by_id=requested_by_id)
             for entry in data.get("entries", ())
             if entry and self._is_video_candidate(entry)
         )
@@ -92,7 +99,13 @@ class TrackExtractor:
         )
         return tracks
 
-    async def find_track(self, query: str, requested_by: str) -> Track:
+    async def find_track(
+        self,
+        query: str,
+        requested_by: str,
+        *,
+        requested_by_id: int | None = None,
+    ) -> Track:
         started_at = time.perf_counter()
         logger.info(
             "Track search started",
@@ -114,7 +127,12 @@ class TrackExtractor:
                 },
             )
             raise
-        track = self._track_from_data(data, requested_by, fallback_url=query)
+        track = self._track_from_data(
+            data,
+            requested_by,
+            requested_by_id=requested_by_id,
+            fallback_url=query,
+        )
         logger.info(
             "Track search completed",
             extra={
@@ -229,6 +247,8 @@ class TrackExtractor:
     def _track_from_data(
         data: dict[str, Any],
         requested_by: str,
+        *,
+        requested_by_id: int | None = None,
         fallback_url: str | None = None,
     ) -> Track:
         webpage_url = data.get("webpage_url") or data.get("url") or fallback_url
@@ -238,6 +258,7 @@ class TrackExtractor:
             title=data.get("title") or "Untitled",
             webpage_url=webpage_url,
             requested_by=requested_by,
+            requested_by_id=requested_by_id,
             duration=int(data["duration"]) if data.get("duration") is not None else None,
             uploader=data.get("uploader") or data.get("channel"),
             thumbnail_url=data.get("thumbnail"),

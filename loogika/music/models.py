@@ -6,6 +6,7 @@ class Track:
     title: str
     webpage_url: str
     requested_by: str
+    requested_by_id: int | None = None
     duration: int | None = None
     uploader: str | None = None
     thumbnail_url: str | None = None

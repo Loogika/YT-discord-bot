@@ -105,8 +105,17 @@ Docker build context.
 - `/stop` - stop playback and clear the queue
 - `/effect preset` - set `normal`, `phone`, `crushed`, or `radio` for upcoming tracks
 - `/queue` - show the current queue
-- `/now-playing` - show the current track
+- `/now-playing` - show the current track, requester, and status
 - `/leave` - disconnect the bot
+
+When a track starts playing, the bot posts a **Playing** embed showing who requested it and an interactive **Skip** button (usable by members in the same voice channel).
+
+### Slash-command synchronization
+
+- Set `DISCORD_GUILD_ID` for instant guild-scoped command updates during development or on a dedicated server.
+- Leave `DISCORD_GUILD_ID` empty for global commands.
+- `DISCORD_CLEAR_STALE_COMMANDS=true` (default) automatically clears stale commands from the opposite scope (global vs guild) so users do not see old or duplicate commands.
+- The bot owner can also run `@LoogikaBot sync [auto|guild|global|clear]` to force a resync or wipe stale commands.
 
 `query` can be a YouTube URL or search text. A direct URL is queued immediately.
 Text search returns up to ten YouTube video candidates in an embed; the user
