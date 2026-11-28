@@ -1,10 +1,15 @@
 import asyncio
+import shlex
 import unittest
 from unittest.mock import patch
 
 from loogika.music.manager import PlayerManager
 from loogika.music.models import Stream, Track
-from loogika.music.player import GuildPlayer, StartupTrackingSource
+from loogika.music.player import (
+    GuildPlayer,
+    StartupTrackingSource,
+    build_ffmpeg_before_options,
+)
 
 
 class FakeExtractor:
@@ -199,6 +204,25 @@ class GuildPlayerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(finished_events, [("track-1", True)])
         await player.close()
+
+    def test_build_ffmpeg_before_options_includes_http_headers(self) -> None:
+        result = build_ffmpeg_before_options(
+            "-reconnect 1",
+            (("User-Agent", "Mozilla/5.0"), ("Accept", "*/*")),
+        )
+        tokens = shlex.split(result)
+
+        self.assertEqual(
+            tokens,
+            [
+                "-reconnect",
+                "1",
+                "-user_agent",
+                "Mozilla/5.0",
+                "-headers",
+                "Accept: */*\r\n",
+            ],
+        )
 
 
 if __name__ == "__main__":

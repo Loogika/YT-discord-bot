@@ -20,3 +20,4 @@ class Stream:
     protocol: str | None
     audio_codec: str | None
     host: str | None
+    http_headers: tuple[tuple[str, str], ...] = ()

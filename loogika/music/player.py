@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import shlex
 import threading
 import time
 from collections import deque
@@ -21,6 +22,31 @@ PLAYBACK_ATTEMPTS = 2
 
 TrackStartedCallback = Callable[[Track, AudioEffect], Awaitable[None]]
 TrackFinishedCallback = Callable[[Track, bool], Awaitable[None]]
+TrackFailedCallback = Callable[[Track, Exception], Awaitable[None]]
+
+
+def build_ffmpeg_before_options(
+    base_options: str,
+    http_headers: tuple[tuple[str, str], ...],
+) -> str:
+    parts = [base_options] if base_options else []
+    user_agent: str | None = None
+    other_headers: list[str] = []
+
+    for key, value in http_headers:
+        clean_value = value.replace("\r", "").replace("\n", "")
+        if key.lower() == "user-agent":
+            user_agent = clean_value
+        else:
+            other_headers.append(f"{key}: {clean_value}")
+
+    if user_agent:
+        parts.append(f"-user_agent {shlex.quote(user_agent)}")
+    if other_headers:
+        header_blob = "\r\n".join(other_headers) + "\r\n"
+        parts.append(f"-headers {shlex.quote(header_blob)}")
+
+    return " ".join(parts)
 
 
 class StartupTrackingSource(discord.AudioSource):
@@ -67,6 +93,7 @@ class GuildPlayer:
         self._playback_finished: asyncio.Event | None = None
         self._on_track_started: TrackStartedCallback | None = None
         self._on_track_finished: TrackFinishedCallback | None = None
+        self._on_track_failed: TrackFailedCallback | None = None
         self._track_started_emitted = False
         self.playback_state = "idle"
 
@@ -75,9 +102,11 @@ class GuildPlayer:
         *,
         on_track_started: TrackStartedCallback | None = None,
         on_track_finished: TrackFinishedCallback | None = None,
+        on_track_failed: TrackFailedCallback | None = None,
     ) -> None:
         self._on_track_started = on_track_started
         self._on_track_finished = on_track_finished
+        self._on_track_failed = on_track_failed
 
     def is_paused(self) -> bool:
         return bool(self._voice_client and self._voice_client.is_paused())
@@ -244,7 +273,7 @@ class GuildPlayer:
                 except asyncio.CancelledError:
                     cancelled = True
                     raise
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         "Track playback failed",
                         extra={
@@ -253,6 +282,7 @@ class GuildPlayer:
                             "track_title": track.title,
                         },
                     )
+                    await self._emit_track_failed(track, exc)
                 finally:
                     was_started = self._track_started_emitted
                     was_skipped = self._cancel_current
@@ -295,10 +325,14 @@ class GuildPlayer:
         if voice_client is None or not voice_client.is_connected():
             raise RuntimeError("The voice client is not connected.")
 
+        before_options = build_ffmpeg_before_options(
+            FFMPEG_BEFORE_OPTIONS,
+            stream.http_headers,
+        )
         source = StartupTrackingSource(
             discord.FFmpegPCMAudio(
                 stream.url,
-                before_options=FFMPEG_BEFORE_OPTIONS,
+                before_options=before_options,
                 options=effect.ffmpeg_options(FFMPEG_OPTIONS),
             )
         )
@@ -435,6 +469,21 @@ class GuildPlayer:
                 "Track finished callback failed",
                 extra={
                     "event": "playback.callback.finished.failed",
+                    "guild_id": self.guild_id,
+                    "track_title": track.title,
+                },
+            )
+
+    async def _emit_track_failed(self, track: Track, error: Exception) -> None:
+        if self._on_track_failed is None:
+            return
+        try:
+            await self._on_track_failed(track, error)
+        except Exception:
+            logger.exception(
+                "Track failed callback failed",
+                extra={
+                    "event": "playback.callback.failed.failed",
                     "guild_id": self.guild_id,
                     "track_title": track.title,
                 },

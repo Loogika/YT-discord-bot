@@ -183,6 +183,8 @@ class TrackExtractor:
         stream_url = data.get("url")
         if not stream_url:
             raise RuntimeError("The audio stream URL is missing.")
+        raw_headers = data.get("http_headers") or {}
+        http_headers = tuple((str(key), str(value)) for key, value in raw_headers.items())
         stream = Stream(
             url=stream_url,
             strategy=strategy,
@@ -190,6 +192,7 @@ class TrackExtractor:
             protocol=data.get("protocol"),
             audio_codec=data.get("acodec"),
             host=urlparse(stream_url).hostname,
+            http_headers=http_headers,
         )
         logger.info(
             "Stream resolution completed",

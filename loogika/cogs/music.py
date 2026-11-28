@@ -100,6 +100,22 @@ class MusicCog(commands.Cog):
     async def _on_track_finished(self, guild_id: int, _track: Track, _was_skipped: bool) -> None:
         await self._disable_now_playing_view(guild_id)
 
+    async def _on_track_failed(self, guild_id: int, track: Track, _error: Exception) -> None:
+        await self._disable_now_playing_view(guild_id)
+        channel_id = self._guild_channels.get(guild_id)
+        if channel_id is None:
+            return
+        channel = self.bot.get_channel(channel_id)
+        if not isinstance(channel, discord.abc.Messageable):
+            return
+        try:
+            await channel.send(
+                f"Could not play [{track.title}]({track.webpage_url}).",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException:
+            pass
+
     async def _connect_player(
         self,
         interaction: discord.Interaction,
@@ -151,6 +167,9 @@ class MusicCog(commands.Cog):
             ),
             on_track_finished=lambda track, skipped, gid=guild_id: self._on_track_finished(
                 gid, track, skipped
+            ),
+            on_track_failed=lambda track, exc, gid=guild_id: self._on_track_failed(
+                gid, track, exc
             ),
         )
         player.bind_voice_client(voice_client)
